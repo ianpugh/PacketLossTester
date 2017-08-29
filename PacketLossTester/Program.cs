@@ -39,12 +39,13 @@ namespace PacketLossTester
         {
             public List<PingReply> Responses { get; set; }
 
-            public double GetJitter (int packetCount = 50)
+            public double GetJitter(int packetCount = 50)
             {
                 if (packetCount == -1)
                 {
                     return Responses.StdDev(rp => Convert.ToDouble(rp.RoundtripTime));
-                } else
+                }
+                else
                 {
                     return Responses.Take(50).StdDev(rp => Convert.ToDouble(rp.RoundtripTime));
                 }
@@ -52,7 +53,7 @@ namespace PacketLossTester
 
             public double GetAverageResponseTime()
             {
-                return Responses.Average(r => r.RoundtripTime);
+                return Responses.Count == 0 ? 0 : Responses.Average(r => r.RoundtripTime);
             }
 
             public int GetSuccessfulResponseCount()
@@ -74,6 +75,7 @@ namespace PacketLossTester
         public ConcurrentDictionary<string, PingReplies> Responses;
         private IEnumerable<string> _hosts;
         private int _interval;
+        private Timer _timer;
 
         public int GetInterval()
         {
@@ -95,7 +97,20 @@ namespace PacketLossTester
 
         private PingReply Ping(string host)
         {
-            return new Ping().Send(host);
+            PingReply pingReply = null;
+
+            try
+            {
+                pingReply = new Ping().Send(host);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("Exception thrown while attempting ping.");
+                Console.ReadLine();
+                Environment.Exit(1);
+            }
+
+            return pingReply;
         }
 
         private void HandleTimer(Object source, ElapsedEventArgs e)
@@ -105,15 +120,14 @@ namespace PacketLossTester
 
         public void Start()
         {
-            var timer = new Timer(_interval);
-            timer.Elapsed += HandleTimer;
-            timer.Start();
+            _timer = new Timer(_interval);
+            _timer.Elapsed += HandleTimer;
+            _timer.Start();
+        }
 
-            do
-            {
-            } while (Console.ReadKey(true).Key != ConsoleKey.Escape);
-
-            timer.Stop();
+        public void Stop()
+        {
+            _timer.Stop();
         }
     }
 
@@ -135,13 +149,13 @@ namespace PacketLossTester
 
             if (!Int32.TryParse(intervalInput, out interval))
             {
-                interval = 1500;
+                interval = 1000;
             }
 
-            var packetTester = new PacketLossTest(new[] { "www.google.com", "www.yahoo.com", "www.reddit.com", "www.microsoft.com", "cox.net", "bing.com", "amazon.com", "8.8.8.8", "8.8.4.4", "stackoverflow.com", "gmail.com" }, interval);
+            var packetTester = new PacketLossTest(new[] { "192.168.1.1", "netflix.com", "www.google.com", "www.yahoo.com", "www.reddit.com", "www.microsoft.com", "cox.net", "bing.com", "amazon.com", "www.amazon.com", "8.8.8.8", "8.8.4.4", "stackoverflow.com", "gmail.com" }, interval);
 
             var startTime = DateTime.Now;
-            var updateScreenTimer = new Timer(2000);
+            var updateScreenTimer = new Timer(5000);
 
             updateScreenTimer.Elapsed += (object sender, ElapsedEventArgs e) =>
             {
@@ -150,11 +164,13 @@ namespace PacketLossTester
                 var totalPackets = 0;
                 var totalFailures = 0;
 
+                var packets = packetTester.Responses.OrderBy(r => r.Value.Responses.Count(re => re.Status == IPStatus.Success));
+
                 Console.ForegroundColor = ConsoleColor.DarkYellow;
                 Console.WriteLine("Test timing interval: {0} ms ({1:0.00} s)\n", packetTester.GetInterval(), Convert.ToDecimal(packetTester.GetInterval()) / 1000);
                 Console.ForegroundColor = ConsoleColor.White;
 
-                foreach (var r in packetTester.Responses)
+                foreach (var r in packets)
                 {
                     var total = r.Value.Responses.Count();
                     var failures = r.Value.GetFailedResponseCount();
@@ -162,7 +178,9 @@ namespace PacketLossTester
                     totalPackets += total;
                     totalFailures += failures;
 
-                    Console.WriteLine("Host: {0,-20} Succ: {1,-5} Fail: {2,-5} Avg: {3,-8:###.##} Loss %: {4,-8:###.##} Jitt: {5:###.##}", r.Key, total, failures, r.Value.GetAverageResponseTime(), (Convert.ToDecimal(failures) / Convert.ToDecimal(total)) * 100, r.Value.GetJitter(50));
+                    Console.WriteLine("Host: {0,-20} Success: {1,-5} Fail: {2,-5} Avg: {3,-8:###.##} Loss %: {4,-8:###.##} Jitt: {5:###.##}", r.Key, total, failures, r.Value.GetAverageResponseTime(), failures == 0 || total == 0 ? 0 : (Convert.ToDecimal(failures) / Convert.ToDecimal(total)) * 100, r.Value.GetJitter(50));
+
+                    Console.ForegroundColor = ConsoleColor.White;
                 }
 
                 Console.WriteLine();
@@ -172,14 +190,22 @@ namespace PacketLossTester
                 Console.ForegroundColor = ConsoleColor.White;
 
                 Console.ForegroundColor = ConsoleColor.Cyan;
-                Console.WriteLine("Elapsed Time: {0}h {1:#}s", ((TimeSpan)(DateTime.Now - startTime)).TotalHours < 0 ? 0 : Math.Round(((TimeSpan)(DateTime.Now - startTime)).TotalHours, 0), ((TimeSpan)(DateTime.Now - startTime)).TotalSeconds % 60);
+                Console.WriteLine("Elapsed Time: {0}m {1:#}s", ((TimeSpan)(DateTime.Now - startTime)).TotalMinutes < 0 ? 0 : Math.Round(((TimeSpan)(DateTime.Now - startTime)).TotalMinutes, 0), ((TimeSpan)(DateTime.Now - startTime)).TotalSeconds % 60);
                 Console.ForegroundColor = ConsoleColor.White;
                 Console.WriteLine();
                 Console.WriteLine("Press ESC to stop.");
             };
 
             updateScreenTimer.Start();
+            System.Threading.Thread.Sleep(2500);
             packetTester.Start();
+
+            do
+            {
+            } while (Console.ReadKey(true).Key != ConsoleKey.Escape);
+
+            packetTester.Stop();
+            updateScreenTimer.Stop();
 
             Console.WriteLine("Press ENTER to close.");
 
